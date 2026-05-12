@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
+import api from "../../utils/api";
 import {
   TrendingUp,
   ShoppingBag,
@@ -11,6 +12,11 @@ import {
   RefreshCw,
   Clock,
   ChevronDown,
+  Check,
+  X,
+  Mail,
+  Phone,
+  MapPin,
 } from "lucide-react";
 import {
   LineChart,
@@ -25,45 +31,29 @@ import {
   Cell,
 } from "recharts";
 
-// ── Dummy data ────────────────────────────────────────────────────────────────
-const SALES_DATA = [
-  { day: "Mon", revenue: 4200, orders: 14 },
-  { day: "Tue", revenue: 6100, orders: 21 },
-  { day: "Wed", revenue: 5400, orders: 18 },
-  { day: "Thu", revenue: 7800, orders: 26 },
-  { day: "Fri", revenue: 9200, orders: 31 },
-  { day: "Sat", revenue: 12500, orders: 42 },
-  { day: "Sun", revenue: 11000, orders: 37 },
-];
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const ORDER_STATUS_DATA = [
-  { name: "Delivered", value: 68, color: "#22c55e" },
-  { name: "Preparing", value: 15, color: "#f97316" },
-  { name: "Pending", value: 10, color: "#eab308" },
-  { name: "Cancelled", value: 7, color: "#ef4444" },
+const ALL_STATUSES = [
+  "pending",
+  "confirmed",
+  "preparing",
+  "on_way",
+  "delivered",
+  "cancelled",
 ];
-
-const INITIAL_ORDERS = [
-  { id: "#FC-1042", dish: "Chicken Karahi", amount: 850, status: "delivered" },
-  {
-    id: "#FC-1041",
-    dish: "Deal: Family Feast",
-    amount: 2200,
-    status: "preparing",
-  },
-  { id: "#FC-1040", dish: "Beef Biryani", amount: 450, status: "pending" },
-  { id: "#FC-1039", dish: "Zinger Burger", amount: 320, status: "delivered" },
-  { id: "#FC-1038", dish: "2x Naan + Daal", amount: 380, status: "cancelled" },
-];
-
-const ALL_STATUSES = ["pending", "preparing", "delivered", "cancelled"];
 
 const STATUS_META = {
-  delivered: {
-    icon: CheckCircle,
-    color: "text-emerald-400",
-    bg: "bg-emerald-500/10",
-    label: "Delivered",
+  pending: {
+    icon: Clock,
+    color: "text-yellow-400",
+    bg: "bg-yellow-500/10",
+    label: "Pending",
+  },
+  confirmed: {
+    icon: Check,
+    color: "text-sky-400",
+    bg: "bg-sky-500/10",
+    label: "Confirmed",
   },
   preparing: {
     icon: RefreshCw,
@@ -71,11 +61,17 @@ const STATUS_META = {
     bg: "bg-orange-500/10",
     label: "Preparing",
   },
-  pending: {
-    icon: Clock,
-    color: "text-yellow-400",
-    bg: "bg-yellow-500/10",
-    label: "Pending",
+  on_way: {
+    icon: TrendingUp,
+    color: "text-violet-400",
+    bg: "bg-violet-500/10",
+    label: "Out for delivery",
+  },
+  delivered: {
+    icon: CheckCircle,
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    label: "Delivered",
   },
   cancelled: {
     icon: XCircle,
@@ -84,6 +80,219 @@ const STATUS_META = {
     label: "Cancelled",
   },
 };
+
+const PIE_COLORS = {
+  pending: "#eab308",
+  confirmed: "#38bdf8",
+  preparing: "#f97316",
+  on_way: "#a78bfa",
+  delivered: "#22c55e",
+  cancelled: "#ef4444",
+};
+
+function buildSalesSeries(orders, rangeDays) {
+  const cutoff = Date.now() - rangeDays * 86400000;
+  const map = Object.fromEntries(
+    DAY_LABELS.map((d) => [d, { day: d, revenue: 0, orders: 0 }]),
+  );
+  (orders || []).forEach((o) => {
+    const t = new Date(o.createdAt).getTime();
+    if (t < cutoff) return;
+    const d = new Date(o.createdAt);
+    const idx = (d.getDay() + 6) % 7;
+    const label = DAY_LABELS[idx];
+    map[label].revenue += Number(o.subtotal) || 0;
+    map[label].orders += 1;
+  });
+  return DAY_LABELS.map((d) => map[d]);
+}
+
+function buildPieData(orders) {
+  const counts = {};
+  ALL_STATUSES.forEach((s) => {
+    counts[s] = 0;
+  });
+  (orders || []).forEach((o) => {
+    if (counts[o.status] !== undefined) counts[o.status] += 1;
+  });
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (!total) {
+    return [{ name: "No orders", value: 100, color: "#3f3f46" }];
+  }
+  return ALL_STATUSES.filter((s) => counts[s] > 0).map((s) => ({
+    name: STATUS_META[s]?.label || s,
+    value: Math.round((counts[s] / total) * 100),
+    color: PIE_COLORS[s] || "#71717a",
+  }));
+}
+
+function ChefItemNotes({ item }) {
+  const parts = [];
+  if (item.spiceLevel && item.spiceLevel !== "medium") {
+    parts.push(`Spice: ${item.spiceLevel}`);
+  }
+  if (item.addons?.length) {
+    parts.push(`Add: ${item.addons.map((a) => a.name).join(", ")}`);
+  }
+  if (item.removals?.length) {
+    parts.push(`Remove: ${item.removals.join(", ")}`);
+  }
+  if (item.tastePrefs?.length) {
+    parts.push(`Prefs: ${item.tastePrefs.join(" · ")}`);
+  }
+  if (item.extras?.ingredients?.length) {
+    const ingLine = item.extras.ingredients
+      .map((x) => {
+        const n = x.name || x;
+        if (x.removed) return `−${n}`;
+        if (x.addedAsPaidAddon) return `+${n}`;
+        return String(n);
+      })
+      .join(", ");
+    parts.push(`Ingredients: ${ingLine}`);
+  }
+  if (item.specialNote?.trim()) {
+    parts.push(`Note: ${item.specialNote}`);
+  }
+  if (!parts.length) return null;
+  return (
+    <p className="text-gray-500 text-[11px] leading-relaxed border-l border-orange-500/30 pl-2 mt-1">
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
+function OrderDetailModal({ order, onClose }) {
+  if (!order) return null;
+  const da = order.deliveryAddress || {};
+  let customizationText = "";
+  if (order.customizations != null && order.customizations !== "") {
+    customizationText =
+      typeof order.customizations === "string"
+        ? order.customizations
+        : JSON.stringify(order.customizations, null, 2);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Close dialog"
+        className="absolute inset-0 bg-black/75 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative bg-[#121212] border border-white/[0.08] rounded-2xl max-w-lg w-full max-h-[90vh] overflow-hidden shadow-2xl flex flex-col"
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">
+          <div>
+            <p className="text-white font-semibold text-sm">Order details</p>
+            <p className="text-gray-600 text-xs font-mono mt-0.5">
+              #{String(order._id).slice(-8).toUpperCase()}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-lg text-gray-500 hover:text-white hover:bg-white/[0.06] transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto p-5 space-y-5">
+          <section className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+            <p className="text-[10px] uppercase tracking-widest text-gray-600 font-bold mb-3">
+              Customer
+            </p>
+            <p className="text-gray-100 text-sm font-semibold">
+              {order.customerName}
+            </p>
+            <p className="text-gray-500 text-xs mt-2 flex items-center gap-2">
+              <Mail size={13} className="shrink-0 text-gray-600" />
+              {order.customerEmail}
+            </p>
+            {order.customerPhone ? (
+              <p className="text-gray-500 text-xs mt-2 flex items-center gap-2">
+                <Phone size={13} className="shrink-0 text-gray-600" />
+                {order.customerPhone}
+              </p>
+            ) : null}
+          </section>
+
+          <section className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+            <p className="text-[10px] uppercase tracking-widest text-gray-600 font-bold mb-3 flex items-center gap-2">
+              <MapPin size={12} /> Delivery
+            </p>
+            <p className="text-gray-300 text-sm">
+              {da.type ? `${da.type} · ` : ""}
+              {da.addressLine || "—"}
+            </p>
+            {da.city ? (
+              <p className="text-gray-600 text-xs mt-1">{da.city}</p>
+            ) : null}
+            {da.instructions ? (
+              <p className="text-gray-500 text-xs mt-3 leading-relaxed border-l border-orange-500/30 pl-3">
+                <span className="text-gray-600 font-semibold">Drop-off: </span>
+                {da.instructions}
+              </p>
+            ) : null}
+          </section>
+
+          {order.notes?.trim() ? (
+            <section className="rounded-xl border border-amber-500/15 bg-amber-500/[0.04] p-4">
+              <p className="text-[10px] uppercase tracking-widest text-amber-500/80 font-bold mb-2">
+                Order note
+              </p>
+              <p className="text-gray-200 text-sm leading-relaxed whitespace-pre-wrap">
+                {order.notes.trim()}
+              </p>
+            </section>
+          ) : null}
+
+          {customizationText ? (
+            <section className="rounded-xl border border-white/[0.06] bg-[#0d0d0d] p-4">
+              <p className="text-[10px] uppercase tracking-widest text-gray-600 font-bold mb-2">
+                Full customization snapshot
+              </p>
+              <pre className="text-[11px] text-gray-400 leading-relaxed whitespace-pre-wrap font-mono max-h-40 overflow-y-auto">
+                {customizationText}
+              </pre>
+            </section>
+          ) : null}
+
+          <section>
+            <p className="text-[10px] uppercase tracking-widest text-gray-600 font-bold mb-3">
+              Line items & chef instructions
+            </p>
+            <div className="space-y-3">
+              {(order.items || []).map((line, idx) => (
+                <div
+                  key={line._id || idx}
+                  className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
+                >
+                  <p className="text-gray-200 text-sm font-semibold">
+                    {line.quantity}× {line.dishName}
+                  </p>
+                  <ChefItemNotes item={line} />
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">
+            <span className="text-gray-600 text-xs">Total paid</span>
+            <span className="text-orange-400 font-bold">
+              ₨{(order.totalAmount ?? 0).toLocaleString()}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
 function StatCard({
@@ -221,19 +430,76 @@ const RANGE_OPTIONS = ["7D", "30D", "90D"];
 export default function OverviewView({ profile }) {
   const [range, setRange] = useState("7D");
   const [animKey, setAnimKey] = useState(0);
-  const [orders, setOrders] = useState(INITIAL_ORDERS);
+  const [orders, setOrders] = useState([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+
+  const rangeDays = range === "7D" ? 7 : range === "30D" ? 30 : 90;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingOrders(true);
+    api
+      .get("/vendor/orders")
+      .then((res) => {
+        if (!cancelled) setOrders(res.data?.data || []);
+      })
+      .catch(() => {
+        if (!cancelled) setOrders([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOrders(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filteredByRange = useMemo(() => {
+    const cutoff = Date.now() - rangeDays * 86400000;
+    return (orders || []).filter(
+      (o) => new Date(o.createdAt).getTime() >= cutoff,
+    );
+  }, [orders, rangeDays]);
+
+  const salesChartData = useMemo(
+    () => buildSalesSeries(orders, rangeDays),
+    [orders, rangeDays],
+  );
+
+  const pieData = useMemo(() => buildPieData(orders), [orders]);
+
+  const totalRevenue = useMemo(
+    () => filteredByRange.reduce((s, o) => s + (Number(o.subtotal) || 0), 0),
+    [filteredByRange],
+  );
+
+  const totalOrders = filteredByRange.length;
+
+  const uniqueCustomers = useMemo(() => {
+    const set = new Set(
+      filteredByRange.map((o) => String(o.customerId || "")),
+    );
+    set.delete("");
+    return set.size;
+  }, [filteredByRange]);
 
   const handleRange = (r) => {
     setRange(r);
     setAnimKey((k) => k + 1);
   };
 
-  const updateOrderStatus = (orderId, newStatus) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)),
-    );
-    // TODO: call API when real Order model exists
-    // api.patch(`/orders/${orderId}/status`, { status: newStatus });
+  const updateOrderStatus = async (orderId, newStatus) => {
+    try {
+      await api.patch(`/orders/${orderId}/status`, { status: newStatus });
+      setOrders((prev) =>
+        prev.map((o) =>
+          String(o._id) === String(orderId) ? { ...o, status: newStatus } : o,
+        ),
+      );
+    } catch {
+      /* ignore */
+    }
   };
 
   return (
@@ -272,40 +538,32 @@ export default function OverviewView({ profile }) {
       {/* Stat cards */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
-          label="Total Revenue"
-          value="₨56,200"
-          sub="This week"
+          label="Total revenue"
+          value={`₨${totalRevenue.toLocaleString()}`}
+          sub={`Last ${range}`}
           icon={TrendingUp}
           iconColor="bg-orange-500/15 text-orange-400"
-          trend="up"
-          trendValue="+18.4%"
         />
         <StatCard
-          label="Total Orders"
-          value="189"
-          sub="This week"
+          label="Total orders"
+          value={loadingOrders ? "…" : String(totalOrders)}
+          sub={`Last ${range}`}
           icon={ShoppingBag}
           iconColor="bg-sky-500/15 text-sky-400"
-          trend="up"
-          trendValue="+7.2%"
         />
         <StatCard
-          label="Avg. Rating"
-          value="4.8 ★"
-          sub="64 reviews"
+          label="Avg. rating"
+          value="—"
+          sub="Reviews coming soon"
           icon={Star}
           iconColor="bg-yellow-500/15 text-yellow-400"
-          trend="up"
-          trendValue="+0.2"
         />
         <StatCard
           label="Customers"
-          value="143"
-          sub="This month"
+          value={loadingOrders ? "…" : String(uniqueCustomers)}
+          sub={`Unique in last ${range}`}
           icon={Users}
           iconColor="bg-emerald-500/15 text-emerald-400"
-          trend="down"
-          trendValue="-3.1%"
         />
       </div>
 
@@ -333,7 +591,7 @@ export default function OverviewView({ profile }) {
           </div>
           <ResponsiveContainer width="100%" height={220} key={animKey}>
             <LineChart
-              data={SALES_DATA}
+              data={salesChartData}
               margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
             >
               <CartesianGrid
@@ -399,7 +657,7 @@ export default function OverviewView({ profile }) {
             <ResponsiveContainer width="100%" height={160}>
               <PieChart>
                 <Pie
-                  data={ORDER_STATUS_DATA}
+                  data={pieData}
                   cx="50%"
                   cy="50%"
                   innerRadius={48}
@@ -408,13 +666,13 @@ export default function OverviewView({ profile }) {
                   dataKey="value"
                   strokeWidth={0}
                 >
-                  {ORDER_STATUS_DATA.map((entry, i) => (
+                  {pieData.map((entry, i) => (
                     <Cell key={i} fill={entry.color} opacity={0.9} />
                   ))}
                 </Pie>
               </PieChart>
             </ResponsiveContainer>
-            <PieLegend data={ORDER_STATUS_DATA} />
+            <PieLegend data={pieData} />
           </div>
         </div>
       </div>
@@ -427,10 +685,10 @@ export default function OverviewView({ profile }) {
         </div>
 
         {/* Table header */}
-        <div className="grid grid-cols-[2fr_1fr_1fr] gap-4 px-6 py-2.5 border-b border-white/[0.04]">
-          {["Order / Dish", "Amount", "Status"].map((h) => (
+        <div className="grid grid-cols-[2fr_1fr_1fr_auto] gap-4 px-6 py-2.5 border-b border-white/[0.04]">
+          {["Order / customer", "Amount", "Status", ""].map((h, i) => (
             <p
-              key={h}
+              key={i}
               className="text-[10px] uppercase tracking-widest text-gray-700 font-semibold"
             >
               {h}
@@ -439,31 +697,79 @@ export default function OverviewView({ profile }) {
         </div>
 
         <div className="divide-y divide-white/[0.04]">
-          {orders.map((order) => (
-            <div
-              key={order.id}
-              className="grid grid-cols-[2fr_1fr_1fr] gap-4 px-6 py-3.5 items-center hover:bg-white/[0.015] transition-colors"
-            >
-              <div>
-                <p className="text-gray-200 text-sm font-medium">
-                  {order.dish}
-                </p>
-                <p className="text-gray-600 text-xs">{order.id}</p>
-              </div>
-              <p className="text-orange-400 text-sm font-bold">
-                ₨{order.amount.toLocaleString()}
-              </p>
-              <div className="flex justify-start">
-                <StatusDropdown
-                  orderId={order.id}
-                  currentStatus={order.status}
-                  onChange={updateOrderStatus}
-                />
-              </div>
-            </div>
-          ))}
+          {loadingOrders && (
+            <p className="px-6 py-8 text-center text-gray-600 text-sm">
+              Loading orders…
+            </p>
+          )}
+          {!loadingOrders && orders.length === 0 && (
+            <p className="px-6 py-8 text-center text-gray-600 text-sm">
+              No orders yet. They will appear here when customers place them.
+            </p>
+          )}
+          {!loadingOrders &&
+            orders.map((order) => {
+              const first = order.items?.[0];
+              const label = first?.dishName || "Order";
+              const oid = String(order._id).slice(-8).toUpperCase();
+              return (
+                <div key={order._id} className="hover:bg-white/[0.015] transition-colors">
+                  <div className="grid grid-cols-[2fr_1fr_1fr_auto] gap-4 px-6 py-3.5 items-center">
+                    <div>
+                      <p className="text-gray-200 text-sm font-medium">
+                        {label}
+                        {(order.items?.length || 0) > 1 && (
+                          <span className="text-gray-600 font-normal">
+                            {" "}
+                            +{order.items.length - 1}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-gray-600 text-xs">#{oid}</p>
+                      <p className="text-gray-500 text-xs mt-1.5">
+                        {order.customerName}
+                        {order.customerEmail
+                          ? ` · ${order.customerEmail}`
+                          : ""}
+                      </p>
+                      {order.customerPhone ? (
+                        <p className="text-gray-600 text-[11px] mt-0.5">
+                          {order.customerPhone}
+                        </p>
+                      ) : null}
+                    </div>
+                    <p className="text-orange-400 text-sm font-bold">
+                      ₨{(order.totalAmount ?? 0).toLocaleString()}
+                    </p>
+                    <div className="flex justify-start">
+                      <StatusDropdown
+                        orderId={order._id}
+                        currentStatus={order.status}
+                        onChange={updateOrderStatus}
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOrder(order)}
+                        className="text-xs font-bold text-orange-400 hover:text-orange-300 px-3 py-1.5 rounded-lg border border-orange-500/25 hover:bg-orange-500/10 transition-colors whitespace-nowrap"
+                      >
+                        View details
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
         </div>
       </div>
+
+      {selectedOrder && (
+        <OrderDetailModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+        />
+      )}
     </div>
   );
 }

@@ -11,6 +11,10 @@ const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
 const vendorRoutes = require("./routes/vendor");
 const dealRoutes = require("./routes/deals");
+const orderRoutes = require("./routes/orders");
+const customerRouter = require("./routes/customer");
+const publicRoutes = require("./routes/public");
+const messageRoutes = require("./routes/messages");
 
 const app = express();
 
@@ -30,6 +34,10 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/vendor", vendorRoutes);
 app.use("/api/dishes", dishRoutes);
 app.use("/api/deals", dealRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/messages", messageRoutes);
+app.use("/api/public", publicRoutes);
+app.use("/api/customer", customerRouter);
 
 app.get("/api/health", (_, res) =>
   res.json({ status: "ok", message: "FlavorCraft API is running 🍽️" }),

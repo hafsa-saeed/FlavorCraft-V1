@@ -121,11 +121,12 @@ dishSchema.index({ name: "text", description: "text" }); // text search
 
 // ── Virtual: total max price (base + all extras) ──────────────────────────────
 dishSchema.virtual("maxPrice").get(function () {
-  const extras = this.ingredients.reduce(
-    (sum, i) => sum + (i.extraPrice || 0),
+  const ingredients = Array.isArray(this.ingredients) ? this.ingredients : [];
+  const extras = ingredients.reduce(
+    (sum, i) => sum + (Number(i?.extraPrice) || 0),
     0,
   );
-  return this.price + extras;
+  return (Number(this.price) || 0) + extras;
 });
 
 module.exports = mongoose.model("Dish", dishSchema);

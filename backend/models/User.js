@@ -37,6 +37,9 @@ const userSchema = new mongoose.Schema(
         return this.role === "customer";
       },
     },
+    phone: { type: String, trim: true, default: "" },
+    /** Default delivery / contact address for customers */
+    address: { type: String, trim: true, default: "", maxlength: 500 },
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -72,6 +75,12 @@ const userSchema = new mongoose.Schema(
 
     vendorApplication: vendorApplicationSchema,
     vendorProfile: vendorProfileSchema,
+
+    /** Customer-only: saved dish ids */
+    favorites: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Dish" }],
+      default: [],
+    },
 
     adminNote: { type: String, trim: true },
     approvedAt: { type: Date },

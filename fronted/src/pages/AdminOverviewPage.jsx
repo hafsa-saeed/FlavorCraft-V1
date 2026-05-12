@@ -6,6 +6,8 @@ import { useAuth } from "../context/AuthContext";
 // ── Sidebar nav items ─────────────────────────────────────────────────────────
 const NAV = [
   { label: "Overview", path: "/admin", icon: "◈" },
+  { label: "Site contact", path: "/admin/site-contact", icon: "⌖" },
+  { label: "Support inbox", path: "/admin/support", icon: "✉" },
   { label: "Pending", path: "/admin/vendors/pending", icon: "⏳" },
   { label: "Approved", path: "/admin/vendors/approved", icon: "✓" },
   { label: "Rejected", path: "/admin/vendors/rejected", icon: "✕" },
@@ -51,7 +53,10 @@ export function AdminLayout({ children }) {
         {/* Nav */}
         <nav className="flex-1 py-4 px-3 space-y-0.5">
           {NAV.map((item) => {
-            const active = pathname === item.path;
+            const active =
+              item.path === "/admin"
+                ? pathname === "/admin"
+                : pathname === item.path;
             return (
               <Link
                 key={item.path}
@@ -147,6 +152,9 @@ export default function AdminOverviewPage() {
           </h1>
           <p className="text-gray-500 text-sm mt-1">
             FlavorCraft platform at a glance
+            {stats?.ordersLast30 != null
+              ? ` · Last 30 days: ${stats.ordersLast30} orders, ₨${(stats.revenueLast30 ?? 0).toLocaleString()} revenue`
+              : ""}
           </p>
         </div>
 
@@ -183,6 +191,12 @@ export default function AdminOverviewPage() {
           <h2 className="text-white font-semibold mb-4">Quick Actions</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
+              {
+                label: "Support inbox (customers & vendors)",
+                path: "/admin/support",
+                color:
+                  "bg-sky-500/10 border-sky-500/20 hover:bg-sky-500/20 text-sky-400",
+              },
               {
                 label: "Review Pending Applications",
                 path: "/admin/vendors/pending",

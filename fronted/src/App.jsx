@@ -1,23 +1,57 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { CartProvider } from "./context/CartContext";
+
+import Navbar from "./components/Navbar";
+
+// ── Pages ─────────────────────────────────────────────────────────────────────
+// Auth & Admin
 import AuthPage from "./pages/AuthPage";
 import AdminOverviewPage from "./pages/AdminOverviewPage";
 import AdminVendorPage from "./pages/AdminVendorPage";
-import VendorProfileSetup from "./pages/VendorProfileSetup";
-import VendorDashboard from "./pages/vendor/VendorDashboard";
 
-// ── Guards ────────────────────────────────────────────────────────────────────
+// Vendor
+import VendorProfileSetup from "./pages/VendorProfileSetup";
+import VendorDashboard from "./pages/VendorDashboard";
+
+// Customer
+import CustomerHome from "./pages/customer/CustomerHome";
+import CustomizePage from "./pages/customer/CustomizePage";
+import CheckoutPage from "./pages/customer/CheckoutPage";
+import CustomerDashboard from "./pages/customer/CustomerDashboard";
+import VendorProfileView from "./pages/customer/VendorProfileView";
+import { AboutPage, ContactPage } from "./pages/shared/AboutContact";
+import MarketplaceRulesPage from "./pages/shared/MarketplaceRulesPage";
+import AdminSupportPage from "./pages/AdminSupportPage";
+import AdminSiteContactPage from "./pages/AdminSiteContactPage";
+
+// ── Route Guards ──────────────────────────────────────────────────────────────
 function RequireAuth({ children, roles }) {
   const { user, loading } = useAuth();
-  if (loading) return <Loader />;
+
+  if (loading) return <FullPageLoader />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
+
+  if (roles && !roles.includes(user.role)) {
+    // Redirect based on actual role
+    if (user.role === "admin") return <Navigate to="/admin" replace />;
+    if (user.role === "vendor") {
+      if (!user.vendorProfile?.isProfileComplete)
+        return <Navigate to="/vendor/setup" replace />;
+      return <Navigate to="/vendor/dashboard" replace />;
+    }
+    if (user.role === "customer") return <Navigate to="/" replace />;
+    return <Navigate to="/auth" replace />;
+  }
+
   return children;
 }
 
 function RedirectIfAuth({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <Loader />;
+
+  if (loading) return <FullPageLoader />;
+
   if (user) {
     if (user.role === "admin") return <Navigate to="/admin" replace />;
     if (user.role === "vendor") {
@@ -25,77 +59,65 @@ function RedirectIfAuth({ children }) {
         return <Navigate to="/vendor/setup" replace />;
       return <Navigate to="/vendor/dashboard" replace />;
     }
-    return <Navigate to="/" replace />;
+    if (user.role === "customer") return <Navigate to="/" replace />;
   }
+
   return children;
 }
 
 function RequireApprovedVendor({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <Loader />;
+
+  if (loading) return <FullPageLoader />;
   if (!user || user.role !== "vendor") return <Navigate to="/auth" replace />;
-  if (user.status !== "approved") return <PendingWall user={user} />;
+
+  if (user.status === "pending")
+    return <PendingApprovalWall status="pending" />;
+  if (user.status === "rejected")
+    return <PendingApprovalWall status="rejected" note={user.adminNote} />;
+  if (user.status !== "approved") return <Navigate to="/auth" replace />;
+
   return children;
 }
 
-// ── Placeholder pages ─────────────────────────────────────────────────────────
-function CustomerHome() {
-  const { user, logout } = useAuth();
+// ── Loaders & Walls ───────────────────────────────────────────────────────────
+function FullPageLoader() {
   return (
     <div
-      className="min-h-screen bg-[#0f0f0f] flex items-center justify-center"
+      className="min-h-screen bg-[#09090b] flex items-center justify-center"
       style={{ fontFamily: "'DM Sans', sans-serif" }}
     >
-      <div className="text-center">
-        <p className="text-5xl mb-4">🔥</p>
-        <h1
-          className="text-2xl font-bold text-white mb-2"
-          style={{ fontFamily: "'Playfair Display', serif" }}
-        >
-          Welcome, {user?.name}!
-        </h1>
-        <p className="text-gray-500 text-sm mb-6">
-          Customer marketplace — coming soon.
-        </p>
-        <button
-          onClick={logout}
-          className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-sm font-semibold hover:bg-orange-600 transition-colors"
-        >
-          Logout
-        </button>
-      </div>
+      <div className="text-orange-500 text-4xl animate-pulse">🔥</div>
     </div>
   );
 }
 
-function PendingWall({ user }) {
+function PendingApprovalWall({ status, note }) {
   const { logout } = useAuth();
   return (
     <div
-      className="min-h-screen bg-[#0f0f0f] flex items-center justify-center p-4"
+      className="min-h-screen bg-[#09090b] flex items-center justify-center p-4"
       style={{ fontFamily: "'DM Sans', sans-serif" }}
     >
       <div className="text-center max-w-sm">
-        <p className="text-5xl mb-5">
-          {user?.status === "rejected" ? "❌" : "⏳"}
-        </p>
+        <div className="text-6xl mb-6">
+          {status === "rejected" ? "❌" : "⏳"}
+        </div>
         <h2
-          className="text-2xl font-bold text-white mb-2"
+          className="text-2xl font-bold text-white mb-3"
           style={{ fontFamily: "'Playfair Display', serif" }}
         >
-          {user?.status === "rejected"
-            ? "Application Rejected"
-            : "Application Pending"}
+          {status === "rejected" ? "Application Rejected" : "Approval Pending"}
         </h2>
-        <p className="text-gray-500 text-sm mb-6">
-          {user?.status === "rejected"
-            ? user.adminNote ||
-              "Your application was not approved. Contact support."
-            : "Our team is reviewing your application. You'll get access within 24–48 hours."}
+        <p className="text-gray-500 text-sm mb-6 leading-relaxed">
+          {status === "rejected"
+            ? note ||
+              "Your vendor application was not approved. Please contact support for details."
+            : "Your vendor application is under review. Our team will respond within 24–48 hours. You'll receive an email notification once approved."}
         </p>
         <button
           onClick={logout}
-          className="text-sm text-gray-600 hover:text-gray-400 transition-colors"
+          className="text-gray-600 hover:text-gray-400 text-sm transition-colors"
         >
           Sign out
         </button>
@@ -104,79 +126,111 @@ function PendingWall({ user }) {
   );
 }
 
-function Loader() {
-  return (
-    <div className="min-h-screen bg-[#0f0f0f] flex items-center justify-center">
-      <div className="text-orange-500 text-3xl animate-pulse">🔥</div>
-    </div>
-  );
-}
-
-// ── App ───────────────────────────────────────────────────────────────────────
+// ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route
-            path="/auth"
-            element={
-              <RedirectIfAuth>
-                <AuthPage />
-              </RedirectIfAuth>
-            }
-          />
-          <Route
-            path="/"
-            element={
-              <RequireAuth roles={["customer"]}>
-                <CustomerHome />
-              </RequireAuth>
-            }
-          />
+        <CartProvider>
+          <Navbar />
+          {/* <div className="pt-16"></div> */}
+          <Routes>
+            {/* ── Public routes (no auth required) ───────────────────────── */}
+            <Route path="/" element={<CustomerHome />} />
+            <Route path="/customize/:dishId" element={<CustomizePage />} />
+            <Route path="/vendor/:vendorId" element={<VendorProfileView />} />
+            <Route path="/about" element={<AboutPage />} />
+            <Route path="/contact" element={<ContactPage />} />
+            <Route path="/marketplace-rules" element={<MarketplaceRulesPage />} />
 
-          {/* Vendor */}
-          <Route
-            path="/vendor/setup"
-            element={
-              <RequireApprovedVendor>
-                <VendorProfileSetup />
-              </RequireApprovedVendor>
-            }
-          />
-          <Route
-            path="/vendor/dashboard"
-            element={
-              <RequireApprovedVendor>
-                <VendorDashboard />
-              </RequireApprovedVendor>
-            }
-          />
+            {/* ── Auth ──────────────────────────────────────────────────── */}
+            <Route
+              path="/auth"
+              element={
+                <RedirectIfAuth>
+                  <AuthPage />
+                </RedirectIfAuth>
+              }
+            />
 
-          {/* Admin */}
-          <Route
-            path="/admin"
-            element={
-              <RequireAuth roles={["admin"]}>
-                <AdminOverviewPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/admin/vendors/:status"
-            element={
-              <RequireAuth roles={["admin"]}>
-                <AdminVendorPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/admin/vendors"
-            element={<Navigate to="/admin/vendors/pending" replace />}
-          />
+            {/* ── Customer routes (require customer role) ───────────────── */}
+            <Route
+              path="/checkout"
+              element={
+                <RequireAuth roles={["customer"]}>
+                  <CheckoutPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <RequireAuth roles={["customer"]}>
+                  <CustomerDashboard />
+                </RequireAuth>
+              }
+            />
 
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            {/* ── Vendor routes ─────────────────────────────────────────── */}
+            <Route
+              path="/vendor/setup"
+              element={
+                <RequireApprovedVendor>
+                  <VendorProfileSetup />
+                </RequireApprovedVendor>
+              }
+            />
+            <Route
+              path="/vendor/dashboard"
+              element={
+                <RequireApprovedVendor>
+                  <VendorDashboard />
+                </RequireApprovedVendor>
+              }
+            />
+
+            {/* ── Admin routes ──────────────────────────────────────────── */}
+            <Route
+              path="/admin"
+              element={
+                <RequireAuth roles={["admin"]}>
+                  <AdminOverviewPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/site-contact"
+              element={
+                <RequireAuth roles={["admin"]}>
+                  <AdminSiteContactPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/support"
+              element={
+                <RequireAuth roles={["admin"]}>
+                  <AdminSupportPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/vendors/:status"
+              element={
+                <RequireAuth roles={["admin"]}>
+                  <AdminVendorPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/vendors"
+              element={<Navigate to="/admin/vendors/pending" replace />}
+            />
+
+            {/* ── Fallback ──────────────────────────────────────────────── */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </CartProvider>
       </AuthProvider>
     </BrowserRouter>
   );

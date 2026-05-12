@@ -5,10 +5,8 @@ import {
   LayoutGrid,
   Settings,
   LogOut,
-  Plus,
-  Search,
   Tag,
-  ChefHat,
+  MessageSquare,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 
@@ -21,12 +19,14 @@ import DealsView from "./DealsView";
 // Import your existing MenuView here — it lives in the same file or a separate component.
 // For clarity this file re-exports a shell; paste your full MenuView here if it was inline.
 import MenuView from "./MenuView"; // ← created below
+import VendorContactAdminView from "./VendorContactAdminView";
 
 // ── Sidebar nav ───────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
   { id: "menu", label: "My Menu", icon: UtensilsCrossed },
   { id: "deals", label: "Deals", icon: Tag },
   { id: "overview", label: "Overview", icon: LayoutGrid },
+  { id: "contactAdmin", label: "Contact admin", icon: MessageSquare },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -139,6 +139,7 @@ export default function VendorDashboard() {
         {activeView === "menu" && <MenuView profile={profile} />}
         {activeView === "deals" && <DealsView />}
         {activeView === "overview" && <OverviewView profile={profile} />}
+        {activeView === "contactAdmin" && <VendorContactAdminView />}
         {activeView === "settings" && <SettingsView profile={profile} />}
       </main>
     </div>

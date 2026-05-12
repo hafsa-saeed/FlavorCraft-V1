@@ -1,10 +1,24 @@
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
+const Order = require("../models/Order");
+const SupportMessage = require("../models/SupportMessage");
 const { protect, restrictTo } = require("../middleware/auth");
 
 // All routes require an approved vendor JWT
 router.use(protect, restrictTo("vendor"));
+
+// GET /api/vendor/orders — same scope as GET /api/orders/vendor-orders
+router.get("/orders", async (req, res) => {
+  try {
+    const orders = await Order.find({ vendorId: req.user._id }).sort(
+      "-createdAt",
+    );
+    res.status(200).json({ status: "success", data: orders });
+  } catch (err) {
+    res.status(400).json({ status: "fail", message: err.message });
+  }
+});
 
 const requireApproved = (req, res, next) => {
   if (req.user.status !== "approved") {
@@ -130,6 +144,48 @@ router.patch("/profile", requireApproved, async (req, res) => {
       message: "Profile updated successfully.",
       vendor,
     });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// POST /api/vendor/support — complaint / message to platform admin
+router.post("/support", async (req, res) => {
+  try {
+    const subject = String(req.body.subject || "").trim();
+    const message = String(req.body.message || "").trim();
+    if (!message) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Message is required.",
+      });
+    }
+    const u = await User.findById(req.user._id).select("email vendorProfile");
+    const shop = u.vendorProfile?.shopName || "Kitchen";
+    const doc = await SupportMessage.create({
+      name: shop.slice(0, 120),
+      email: String(u.email || "").toLowerCase().slice(0, 200),
+      subject: subject.slice(0, 200),
+      message: message.slice(0, 5000),
+      fromRole: "vendor",
+      userId: req.user._id,
+      status: "received",
+      read: false,
+    });
+    res.status(201).json({ status: "success", data: doc });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// GET /api/vendor/support-tickets — vendor's messages to admin + status
+router.get("/support-tickets", async (req, res) => {
+  try {
+    const tickets = await SupportMessage.find({ userId: req.user._id })
+      .sort("-createdAt")
+      .limit(100)
+      .lean();
+    res.json({ status: "success", count: tickets.length, tickets });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
   }

@@ -14,7 +14,12 @@ export const AuthProvider = ({ children }) => {
       api
         .get("/auth/me")
         .then((res) => setUser(res.data.user))
-        .catch(() => localStorage.removeItem("fc_token"))
+        .catch((err) => {
+          // Only drop the session when the server rejects the token — not on network blips.
+          if (err.response?.status === 401) {
+            localStorage.removeItem("fc_token");
+          }
+        })
         .finally(() => setLoading(false));
     } else {
       setLoading(false);

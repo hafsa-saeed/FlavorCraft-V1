@@ -1,6 +1,10 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const router = express.Router();
 const User = require("../models/User");
+const Order = require("../models/Order");
+const SupportMessage = require("../models/SupportMessage");
+const SiteSettings = require("../models/SiteSettings");
 const { protect, restrictTo } = require("../middleware/auth");
 
 // Every route in this file requires admin auth
@@ -12,12 +16,27 @@ router.use(protect, restrictTo("admin"));
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/stats", async (req, res) => {
   try {
-    const [pending, approved, rejected, customers] = await Promise.all([
-      User.countDocuments({ role: "vendor", status: "pending" }),
-      User.countDocuments({ role: "vendor", status: "approved" }),
-      User.countDocuments({ role: "vendor", status: "rejected" }),
-      User.countDocuments({ role: "customer" }),
-    ]);
+    const since = new Date(Date.now() - 30 * 86400000);
+    const [pending, approved, rejected, customers, orderAgg, unreadContact] =
+      await Promise.all([
+        User.countDocuments({ role: "vendor", status: "pending" }),
+        User.countDocuments({ role: "vendor", status: "approved" }),
+        User.countDocuments({ role: "vendor", status: "rejected" }),
+        User.countDocuments({ role: "customer" }),
+        Order.aggregate([
+          { $match: { createdAt: { $gte: since } } },
+          {
+            $group: {
+              _id: null,
+              ordersLast30: { $sum: 1 },
+              revenueLast30: { $sum: "$totalAmount" },
+            },
+          },
+        ]),
+        SupportMessage.countDocuments({ read: false }),
+      ]);
+
+    const o = orderAgg[0] || { ordersLast30: 0, revenueLast30: 0 };
 
     res.json({
       status: "success",
@@ -27,8 +46,72 @@ router.get("/stats", async (req, res) => {
         rejected,
         customers,
         totalVendors: pending + approved + rejected,
+        ordersLast30: o.ordersLast30 || 0,
+        revenueLast30: Math.round(Number(o.revenueLast30) || 0),
+        unreadContactMessages: unreadContact,
       },
     });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// GET /api/admin/contact-messages — public contact form submissions
+router.get("/contact-messages", async (req, res) => {
+  try {
+    const limit = Math.min(500, Math.max(1, parseInt(String(req.query.limit), 10) || 100));
+    const messages = await SupportMessage.find()
+      .sort("-createdAt")
+      .limit(limit)
+      .lean();
+    res.json({ status: "success", count: messages.length, messages });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+const SUPPORT_STATUSES = new Set([
+  "received",
+  "in_progress",
+  "resolved",
+  "closed",
+]);
+
+// PATCH /api/admin/contact-messages/:id — status + admin reply note + read
+router.patch("/contact-messages/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ status: "fail", message: "Invalid id." });
+    }
+    const updates = {};
+    if (req.body.status !== undefined) {
+      if (!SUPPORT_STATUSES.has(String(req.body.status))) {
+        return res.status(400).json({ status: "fail", message: "Invalid status." });
+      }
+      updates.status = req.body.status;
+    }
+    if (req.body.adminNote !== undefined) {
+      updates.adminNote = String(req.body.adminNote).slice(0, 2000);
+    }
+    if (req.body.read !== undefined) {
+      updates.read = Boolean(req.body.read);
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Provide status, adminNote, and/or read.",
+      });
+    }
+    const doc = await SupportMessage.findByIdAndUpdate(
+      id,
+      { $set: updates },
+      { new: true, runValidators: true },
+    ).lean();
+    if (!doc) {
+      return res.status(404).json({ status: "fail", message: "Message not found." });
+    }
+    res.json({ status: "success", data: doc });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
   }
@@ -170,6 +253,40 @@ router.delete("/vendors/:id", async (req, res) => {
       status: "success",
       message: "Vendor account permanently deleted.",
     });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// PATCH /api/admin/site-settings — public contact strip (email, phone, address…)
+router.patch("/site-settings", async (req, res) => {
+  try {
+    const allowed = [
+      "contactEmail",
+      "contactPhone",
+      "contactPhoneHref",
+      "officeAddress",
+      "officeHours",
+      "responseNote",
+    ];
+    const updates = {};
+    allowed.forEach((k) => {
+      if (req.body[k] !== undefined) {
+        updates[k] = String(req.body[k]).trim().slice(0, 500);
+      }
+    });
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        status: "fail",
+        message: "No valid fields to update.",
+      });
+    }
+    const doc = await SiteSettings.findOneAndUpdate(
+      { _id: "global" },
+      { $set: updates },
+      { new: true, upsert: true },
+    );
+    res.json({ status: "success", settings: doc });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
   }

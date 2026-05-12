@@ -40,6 +40,54 @@ exports.protect = async (req, res, next) => {
   }
 };
 
+// ─── tryOptionalAuth ─────────────────────────────────────────────────────────
+/** Optional JWT: sets req.optionalUser (any role) or leaves null — never sends 401. */
+exports.tryOptionalAuth = async (req, res, next) => {
+  req.optionalUser = null;
+  try {
+    let token;
+    if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith("Bearer ")
+    ) {
+      token = req.headers.authorization.split(" ")[1];
+    }
+    if (!token) return next();
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select(
+      "name email role vendorProfile",
+    );
+    if (user) req.optionalUser = user;
+  } catch {
+    /* invalid / expired token — treat as anonymous */
+  }
+  next();
+};
+
+// ─── tryCustomer ─────────────────────────────────────────────────────────────
+// If a valid Bearer token belongs to a customer, sets req.user (minimal fields).
+// Otherwise continues without req.user — for optional auth on public routes.
+exports.tryCustomer = async (req, res, next) => {
+  try {
+    let token;
+    if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith("Bearer ")
+    ) {
+      token = req.headers.authorization.split(" ")[1];
+    }
+    if (!token) return next();
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select("_id role favorites");
+    if (user && user.role === "customer") req.user = user;
+  } catch {
+    // treat as guest
+  }
+  next();
+};
+
 // ─── restrictTo ──────────────────────────────────────────────────────────────
 // Role-based access control
 exports.restrictTo = (...roles) => {
